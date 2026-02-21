@@ -63,6 +63,11 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+// Build a trigger pattern for a specific assistant name (for per-group triggers)
+export function buildTriggerPattern(name: string): RegExp {
+  return new RegExp(`^@${escapeRegex(name)}\\b`, 'i');
+}
+
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =

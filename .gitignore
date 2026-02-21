@@ -33,3 +33,9 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Agent configurations
+agents/
+
+# Host-side skill integrations
+src/skills/

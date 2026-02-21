@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  agentType?: string;
 }
 
 interface ContainerOutput {
@@ -397,6 +398,15 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Load agent-specific CLAUDE.md based on agentType (e.g., mai.md for Mai agent)
+  let agentClaudeMd: string | undefined;
+  const agentType = containerInput.agentType || 'jai';
+  const agentClaudeMdPath = `/workspace/agents/${agentType}/CLAUDE.md`;
+  if (fs.existsSync(agentClaudeMdPath)) {
+    agentClaudeMd = fs.readFileSync(agentClaudeMdPath, 'utf-8');
+    log(`Loaded agent-specific CLAUDE.md for: ${agentType}`);
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -413,6 +423,37 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Define tools based on agent type
+  const baseTools = ['WebSearch', 'WebFetch', 'Read', 'Grep'];
+  const fullTools = [
+    'Bash',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'WebSearch', 'WebFetch',
+    'Task', 'TaskOutput', 'TaskStop',
+    'TeamCreate', 'TeamDelete', 'SendMessage',
+    'TodoWrite', 'ToolSearch', 'Skill',
+    'NotebookEdit',
+    'mcp__nanoclaw__*',
+    'mcp__gmail__*',
+    'mcp__google-docs__*'
+  ];
+  const allowedTools = agentType === 'mai' ? baseTools : fullTools;
+
+  // Check if using Ollama/Custom API (rely on ANTHROPIC_MODEL env var instead of model option)
+  const isOllama = sdkEnv.ANTHROPIC_BASE_URL && sdkEnv.ANTHROPIC_BASE_URL.includes('ollama');
+  const isCustomApi = sdkEnv.ANTHROPIC_BASE_URL && !isOllama;
+  const useExplicitModel = !isOllama && !isCustomApi;
+
+  // Debug logging
+  console.log('[agent-runner] Ollama detection:', {
+    authToken: sdkEnv.ANTHROPIC_AUTH_TOKEN,
+    baseUrl: sdkEnv.ANTHROPIC_BASE_URL,
+    isOllama,
+    isCustomApi,
+    useExplicitModel,
+    model: sdkEnv.ANTHROPIC_MODEL
+  });
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -420,24 +461,19 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      // For Anthropic API, pass model explicitly. For Ollama/Custom API, rely on env vars
+      ...(useExplicitModel && { model: sdkEnv.ANTHROPIC_MODEL || 'haiku' }),
+      // For custom APIs (including Ollama), pass baseUrl explicitly
+      ...((isOllama || isCustomApi) && sdkEnv.ANTHROPIC_BASE_URL && { baseUrl: sdkEnv.ANTHROPIC_BASE_URL }),
+      systemPrompt: agentClaudeMd
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: agentClaudeMd }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*'
-      ],
+      allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
-      mcpServers: {
+      mcpServers: agentType === 'mai' ? undefined : {
         nanoclaw: {
           command: 'node',
           args: [mcpServerPath],
@@ -447,8 +483,10 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        gmail: { command: 'npx', args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'] },
+        'google-docs': { command: 'npx', args: ['-y', 'google-docs-mcp'] },
       },
-      hooks: {
+      hooks: agentType === 'mai' ? undefined : {
         PreCompact: [{ hooks: [createPreCompactHook()] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },

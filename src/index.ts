@@ -3,6 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  buildTriggerPattern,
   DATA_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
@@ -137,8 +138,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
+    const groupTrigger = group.trigger?.replace(/^@/, '') || ASSISTANT_NAME;
+    const triggerPattern = buildTriggerPattern(groupTrigger);
     const hasTrigger = missedMessages.some((m) =>
-      TRIGGER_PATTERN.test(m.content.trim()),
+      triggerPattern.test(m.content.trim()),
     );
     if (!hasTrigger) return true;
   }
@@ -180,7 +183,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        await channel.sendMessage(chatJid, text, group.agentName);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -270,6 +273,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        agentType: group.agentType,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -344,8 +348,10 @@ async function startMessageLoop(): Promise<void> {
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
+            const groupTrigger = group.trigger?.replace(/^@/, '') || ASSISTANT_NAME;
+            const triggerPattern = buildTriggerPattern(groupTrigger);
             const hasTrigger = groupMessages.some((m) =>
-              TRIGGER_PATTERN.test(m.content.trim()),
+              triggerPattern.test(m.content.trim()),
             );
             if (!hasTrigger) continue;
           }
