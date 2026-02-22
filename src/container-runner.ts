@@ -219,6 +219,8 @@ function readSecrets(): Record<string, string> {
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_MODEL',
+    'OLLAMA_API_KEY',
+    'OLLAMA_NUM_CTX',
   ]);
 }
 

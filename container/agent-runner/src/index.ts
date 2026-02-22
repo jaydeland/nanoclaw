@@ -439,19 +439,18 @@ async function runQuery(
   ];
   const allowedTools = agentType === 'mai' ? baseTools : fullTools;
 
-  // Check if using Ollama/Custom API (rely on ANTHROPIC_MODEL env var instead of model option)
+  // Check if using Ollama/Custom API
   const isOllama = sdkEnv.ANTHROPIC_BASE_URL && sdkEnv.ANTHROPIC_BASE_URL.includes('ollama');
   const isCustomApi = sdkEnv.ANTHROPIC_BASE_URL && !isOllama;
-  const useExplicitModel = !isOllama && !isCustomApi;
 
   // Debug logging
-  console.log('[agent-runner] Ollama detection:', {
-    authToken: sdkEnv.ANTHROPIC_AUTH_TOKEN,
+  console.log('[agent-runner] API configuration:', {
     baseUrl: sdkEnv.ANTHROPIC_BASE_URL,
     isOllama,
     isCustomApi,
-    useExplicitModel,
-    model: sdkEnv.ANTHROPIC_MODEL
+    model: sdkEnv.ANTHROPIC_MODEL,
+    hasOllamaKey: !!sdkEnv.OLLAMA_API_KEY,
+    hasAuthToken: !!sdkEnv.ANTHROPIC_AUTH_TOKEN,
   });
 
   for await (const message of query({
@@ -461,8 +460,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      // For Anthropic API, pass model explicitly. For Ollama/Custom API, rely on env vars
-      ...(useExplicitModel && { model: sdkEnv.ANTHROPIC_MODEL || 'haiku' }),
+      // Always pass model explicitly when configured - SDK doesn't auto-read ANTHROPIC_MODEL
+      ...(sdkEnv.ANTHROPIC_MODEL && { model: sdkEnv.ANTHROPIC_MODEL }),
       // For custom APIs (including Ollama), pass baseUrl explicitly
       ...((isOllama || isCustomApi) && sdkEnv.ANTHROPIC_BASE_URL && { baseUrl: sdkEnv.ANTHROPIC_BASE_URL }),
       systemPrompt: agentClaudeMd
