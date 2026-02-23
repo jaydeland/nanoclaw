@@ -224,3 +224,36 @@ You have access to Gmail via MCP tools:
 - `mcp__gmail__list_labels` - List available labels
 
 Example: "Check my unread emails from today" or "Send an email to john@example.com about the meeting"
+
+## Google Workspace (Drive, Docs, Sheets, Slides)
+
+You have unified access to Google Drive via MCP tools:
+
+### Drive Operations
+- `mcp__google-drive__search` - Search files across Drive
+- `mcp__google-drive__listFolder` - List folder contents
+- `mcp__google-drive__createFolder` - Create new folders
+- `mcp__google-drive__renameItem` / `moveItem` / `deleteItem` - File management
+
+### Google Docs
+- `mcp__google-drive__createGoogleDoc` - Create document with content
+- `mcp__google-drive__updateGoogleDoc` - Update document content
+- `mcp__google-drive__getGoogleDocContent` - Get document content
+- `mcp__google-drive__formatGoogleDocText` - Apply text formatting (bold, italic, etc.)
+- `mcp__google-drive__formatGoogleDocParagraph` - Apply paragraph styles (headings, alignment)
+
+### Google Sheets
+- `mcp__google-drive__createGoogleSheet` - Create spreadsheet with data
+- `mcp__google-drive__updateGoogleSheet` - Update cell values
+- `mcp__google-drive__getGoogleSheetContent` - Get cell data
+- `mcp__google-drive__formatGoogleSheetCells` / `formatGoogleSheetText` / `formatGoogleSheetNumbers` - Cell formatting
+- `mcp__google-drive__mergeGoogleSheetCells` / `setGoogleSheetBorders` - Layout tools
+
+### Google Slides
+- `mcp__google-drive__createGoogleSlides` - Create presentation
+- `mcp__google-drive__updateGoogleSlides` - Update slides
+- `mcp__google-drive__getGoogleSlidesContent` - Get presentation content
+- `mcp__google-drive__formatGoogleSlidesText` / `formatGoogleSlidesParagraph` - Text styling
+- `mcp__google-drive__setGoogleSlidesBackground` / `styleGoogleSlidesShape` - Visual formatting
+
+Example: "Create a Google Doc called 'Meeting Notes' with today's agenda" or "Update the sales spreadsheet with Q4 data"

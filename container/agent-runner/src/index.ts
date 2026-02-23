@@ -435,7 +435,7 @@ async function runQuery(
     'NotebookEdit',
     'mcp__nanoclaw__*',
     'mcp__gmail__*',
-    'mcp__google-docs__*'
+    'mcp__google-drive__*'
   ];
   const allowedTools = agentType === 'mai' ? baseTools : fullTools;
 
@@ -483,7 +483,15 @@ async function runQuery(
           },
         },
         gmail: { command: 'npx', args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'] },
-        'google-docs': { command: 'npx', args: ['-y', 'google-docs-mcp'] },
+        // Unified Google MCP: Drive, Docs, Sheets, Slides - uses same credentials as Gmail
+        'google-drive': {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.gmail-mcp/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.gmail-mcp/google-drive-tokens.json',
+          },
+        },
       },
       hooks: agentType === 'mai' ? undefined : {
         PreCompact: [{ hooks: [createPreCompactHook()] }],
