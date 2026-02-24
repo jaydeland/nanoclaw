@@ -171,7 +171,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  // WhatsApp typing indicators timeout after ~10-15 seconds
+  // Refresh periodically during long operations
+  const TYPING_REFRESH_INTERVAL = 8000; // 8 seconds
+  let typingInterval: ReturnType<typeof setInterval> | null = null;
+
+  const startTypingIndicator = async () => {
+    await channel.setTyping?.(chatJid, true);
+    typingInterval = setInterval(() => {
+      channel.setTyping?.(chatJid, true).catch(() => {});
+    }, TYPING_REFRESH_INTERVAL);
+  };
+
+  const stopTypingIndicator = async () => {
+    if (typingInterval) {
+      clearInterval(typingInterval);
+      typingInterval = null;
+    }
+    await channel.setTyping?.(chatJid, false);
+  };
+
+  await startTypingIndicator();
   let hadError = false;
   let outputSentToUser = false;
 
@@ -199,7 +219,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
-  await channel.setTyping?.(chatJid, false);
+  await stopTypingIndicator();
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
