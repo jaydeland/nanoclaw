@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { MediaAttachment, NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
 
@@ -29,6 +29,20 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+
+    CREATE TABLE IF NOT EXISTS media_attachments (
+      message_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      duration INTEGER,
+      PRIMARY KEY (message_id),
+      FOREIGN KEY (message_id, chat_jid) REFERENCES messages(id, chat_jid)
+    );
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -256,6 +270,57 @@ export function storeMessage(msg: NewMessage): void {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
   );
+
+  // Store media attachment if present
+  if (msg.media) {
+    storeMedia(msg.media, msg.chat_jid);
+  }
+}
+
+export function storeMedia(media: MediaAttachment, chatJid: string): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO media_attachments (message_id, chat_jid, media_type, mime_type, filename, file_size, width, height, duration)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    media.message_id,
+    chatJid,
+    media.media_type,
+    media.mime_type,
+    media.filename,
+    media.file_size,
+    media.width ?? null,
+    media.height ?? null,
+    media.duration ?? null,
+  );
+}
+
+export function getMediaForMessage(messageId: string): MediaAttachment | undefined {
+  const row = db
+    .prepare('SELECT * FROM media_attachments WHERE message_id = ?')
+    .get(messageId) as {
+      message_id: string;
+      chat_jid: string;
+      media_type: string;
+      mime_type: string;
+      filename: string;
+      file_size: number;
+      width: number | null;
+      height: number | null;
+      duration: number | null;
+    } | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    message_id: row.message_id,
+    media_type: row.media_type as MediaAttachment['media_type'],
+    mime_type: row.mime_type,
+    filename: row.filename,
+    file_size: row.file_size,
+    width: row.width ?? undefined,
+    height: row.height ?? undefined,
+    duration: row.duration ?? undefined,
+  };
 }
 
 /**
@@ -296,23 +361,58 @@ export function getNewMessages(
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
-    FROM messages
-    WHERE timestamp > ? AND chat_jid IN (${placeholders})
-      AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp
+    SELECT m.id, m.chat_jid, m.sender, m.sender_name, m.content, m.timestamp,
+           ma.media_type, ma.mime_type, ma.filename, ma.file_size, ma.width, ma.height, ma.duration
+    FROM messages m
+    LEFT JOIN media_attachments ma ON m.id = ma.message_id
+    WHERE m.timestamp > ? AND m.chat_jid IN (${placeholders})
+      AND m.is_bot_message = 0 AND m.content NOT LIKE ?
+    ORDER BY m.timestamp
   `;
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`) as Array<{
+      id: string;
+      chat_jid: string;
+      sender: string;
+      sender_name: string;
+      content: string;
+      timestamp: string;
+      media_type: string | null;
+      mime_type: string | null;
+      filename: string | null;
+      file_size: number | null;
+      width: number | null;
+      height: number | null;
+      duration: number | null;
+    }>;
+
+  const messages: NewMessage[] = rows.map(row => ({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    sender: row.sender,
+    sender_name: row.sender_name,
+    content: row.content,
+    timestamp: row.timestamp,
+    media: row.media_type ? {
+      message_id: row.id,
+      media_type: row.media_type as MediaAttachment['media_type'],
+      mime_type: row.mime_type!,
+      filename: row.filename!,
+      file_size: row.file_size!,
+      width: row.width ?? undefined,
+      height: row.height ?? undefined,
+      duration: row.duration ?? undefined,
+    } : undefined,
+  }));
 
   let newTimestamp = lastTimestamp;
-  for (const row of rows) {
-    if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
+  for (const msg of messages) {
+    if (msg.timestamp > newTimestamp) newTimestamp = msg.timestamp;
   }
 
-  return { messages: rows, newTimestamp };
+  return { messages, newTimestamp };
 }
 
 export function getMessagesSince(
@@ -323,15 +423,50 @@ export function getMessagesSince(
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
-    FROM messages
-    WHERE chat_jid = ? AND timestamp > ?
-      AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp
+    SELECT m.id, m.chat_jid, m.sender, m.sender_name, m.content, m.timestamp,
+           ma.media_type, ma.mime_type, ma.filename, ma.file_size, ma.width, ma.height, ma.duration
+    FROM messages m
+    LEFT JOIN media_attachments ma ON m.id = ma.message_id
+    WHERE m.chat_jid = ? AND m.timestamp > ?
+      AND m.is_bot_message = 0 AND m.content NOT LIKE ?
+    ORDER BY m.timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as Array<{
+      id: string;
+      chat_jid: string;
+      sender: string;
+      sender_name: string;
+      content: string;
+      timestamp: string;
+      media_type: string | null;
+      mime_type: string | null;
+      filename: string | null;
+      file_size: number | null;
+      width: number | null;
+      height: number | null;
+      duration: number | null;
+    }>;
+
+  return rows.map(row => ({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    sender: row.sender,
+    sender_name: row.sender_name,
+    content: row.content,
+    timestamp: row.timestamp,
+    media: row.media_type ? {
+      message_id: row.id,
+      media_type: row.media_type as MediaAttachment['media_type'],
+      mime_type: row.mime_type!,
+      filename: row.filename!,
+      file_size: row.file_size!,
+      width: row.width ?? undefined,
+      height: row.height ?? undefined,
+      duration: row.duration ?? undefined,
+    } : undefined,
+  }));
 }
 
 export function createTask(

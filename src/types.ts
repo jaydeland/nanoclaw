@@ -43,6 +43,17 @@ export interface RegisteredGroup {
   agentName?: string; // The name to use in message prefix (e.g., "Jai", "Mai")
 }
 
+export interface MediaAttachment {
+  message_id: string;
+  media_type: 'image' | 'video' | 'audio' | 'document' | 'sticker';
+  mime_type: string;
+  filename: string;
+  file_size: number;
+  width?: number;
+  height?: number;
+  duration?: number; // For audio/video in seconds
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -52,6 +63,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  media?: MediaAttachment;
 }
 
 export interface ScheduledTask {

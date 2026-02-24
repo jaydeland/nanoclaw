@@ -1,23 +1,25 @@
 import { exec } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   WASocket,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, STORE_DIR } from '../config.js';
+import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, MEDIA_DIR, STORE_DIR } from '../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, MediaAttachment, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -171,8 +173,11 @@ export class WhatsAppChannel implements Channel {
             msg.message?.videoMessage?.caption ||
             '';
 
-          // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-          if (!content) continue;
+          // Check for media attachments
+          const mediaInfo = await this.downloadMediaIfNeeded(msg, chatJid);
+
+          // Skip protocol messages with no text content AND no media (encryption keys, read receipts, etc.)
+          if (!content && !mediaInfo) continue;
 
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
@@ -195,6 +200,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            media: mediaInfo,
           });
         }
       }
@@ -329,5 +335,130 @@ export class WhatsAppChannel implements Channel {
     } finally {
       this.flushing = false;
     }
+  }
+
+  /**
+   * Download media from a WhatsApp message if it contains an image, video, or document.
+   * Returns media metadata if successful, undefined otherwise.
+   */
+  private async downloadMediaIfNeeded(
+    msg: any,
+    chatJid: string,
+  ): Promise<MediaAttachment | undefined> {
+    const messageId = msg.key.id;
+    if (!messageId) return undefined;
+
+    // Determine media type and extract media message
+    let mediaMessage: any = null;
+    let mediaType: MediaAttachment['media_type'] | null = null;
+    let mimeType: string = '';
+    let width: number | undefined;
+    let height: number | undefined;
+    let duration: number | undefined;
+
+    if (msg.message?.imageMessage) {
+      mediaMessage = msg.message.imageMessage;
+      mediaType = 'image';
+      mimeType = mediaMessage.mimetype || 'image/jpeg';
+      width = mediaMessage.width;
+      height = mediaMessage.height;
+    } else if (msg.message?.videoMessage) {
+      mediaMessage = msg.message.videoMessage;
+      mediaType = 'video';
+      mimeType = mediaMessage.mimetype || 'video/mp4';
+      width = mediaMessage.width;
+      height = mediaMessage.height;
+      duration = mediaMessage.seconds;
+    } else if (msg.message?.audioMessage) {
+      mediaMessage = msg.message.audioMessage;
+      mediaType = 'audio';
+      mimeType = mediaMessage.mimetype || 'audio/ogg';
+      duration = mediaMessage.seconds;
+    } else if (msg.message?.documentMessage) {
+      mediaMessage = msg.message.documentMessage;
+      mediaType = 'document';
+      mimeType = mediaMessage.mimetype || 'application/octet-stream';
+    } else if (msg.message?.stickerMessage) {
+      mediaMessage = msg.message.stickerMessage;
+      mediaType = 'sticker';
+      mimeType = mediaMessage.mimetype || 'image/webp';
+      width = mediaMessage.width;
+      height = mediaMessage.height;
+    }
+
+    if (!mediaMessage || !mediaType) return undefined;
+
+    try {
+      // Ensure media directory exists
+      fs.mkdirSync(MEDIA_DIR, { recursive: true });
+
+      // Download the media
+      const buffer = await downloadMediaMessage(
+        msg,
+        'buffer',
+        {},
+        {
+          logger,
+          reuploadRequest: async () => msg,
+        },
+      );
+
+      if (!buffer || buffer.length === 0) {
+        logger.warn({ messageId }, 'Downloaded media is empty');
+        return undefined;
+      }
+
+      // Generate filename with extension based on mime type
+      const ext = this.getExtensionFromMime(mimeType);
+      const filename = `${messageId}${ext}`;
+      const filePath = path.join(MEDIA_DIR, filename);
+
+      // Write to disk
+      fs.writeFileSync(filePath, buffer);
+
+      logger.info({
+        messageId,
+        mediaType,
+        mimeType,
+        fileSize: buffer.length,
+        filename,
+      }, 'Media downloaded and saved');
+
+      return {
+        message_id: messageId,
+        media_type: mediaType,
+        mime_type: mimeType,
+        filename,
+        file_size: buffer.length,
+        width,
+        height,
+        duration,
+      };
+    } catch (err) {
+      logger.error({ err, messageId, mediaType }, 'Failed to download media');
+      return undefined;
+    }
+  }
+
+  /**
+   * Get file extension from mime type.
+   */
+  private getExtensionFromMime(mimeType: string): string {
+    const mimeToExt: Record<string, string> = {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+      'video/mp4': '.mp4',
+      'video/webm': '.webm',
+      'video/3gpp': '.3gp',
+      'audio/ogg': '.ogg',
+      'audio/mpeg': '.mp3',
+      'audio/mp4': '.m4a',
+      'audio/aac': '.aac',
+      'application/pdf': '.pdf',
+      'application/octet-stream': '.bin',
+    };
+    return mimeToExt[mimeType] || '';
   }
 }

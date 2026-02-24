@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  MEDIA_DIR,
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -195,6 +196,16 @@ function buildVolumeMounts(
     readonly: true,
   });
 
+  // Media directory (images, videos, etc. from WhatsApp messages)
+  // Mounted read-only so agents can access media but not modify it
+  if (fs.existsSync(MEDIA_DIR)) {
+    mounts.push({
+      hostPath: MEDIA_DIR,
+      containerPath: '/workspace/media',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -226,6 +237,9 @@ function readSecrets(): Record<string, string> {
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Set memory limit for the container (8GB to match host process)
+  args.push('--memory', '8g');
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
